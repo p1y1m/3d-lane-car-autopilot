@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>3D Lane Car (Manual / Auto)</title>
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:#0b1020; }
+    canvas { display:block; }
+
+    #hud {
+      position: fixed; left: 10px; top: 10px; right: 10px;
+      font: 14px/1.25 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      padding: 10px 12px; border-radius: 12px;
+      background: rgba(0,0,0,0.55); color: white;
+      user-select: none;
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+      z-index: 9999;
+    }
+    .btn {
+      padding:10px 12px; border-radius:10px;
+      border:1px solid rgba(255,255,255,.25);
+      background:rgba(255,255,255,.10);
+      color:#fff; font-weight:800; cursor:pointer;
+    }
+    .btn.active { background:rgba(255,255,255,.30); }
+    .pill { padding:4px 10px; border-radius:999px; background:rgba(255,255,255,0.10); }
+
+    #pad {
+      position: fixed; left:50%; bottom:14px; transform:translateX(-50%);
+      display:flex; gap:10px; align-items:center; justify-content:center;
+      z-index: 9999;
+    }
+    .padBtn{
+      width:64px; height:64px; border-radius:16px;
+      border:1px solid rgba(255,255,255,.25);
+      background:rgba(0,0,0,.28); backdrop-filter:blur(6px);
+      color:#fff; font-size:26px; font-weight:900;
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer; user-select:none;
+    }
+    .padBtn:active{ transform:scale(.98); }
+
+    @media (max-width:480px){
+      #hud{ left:8px; top:8px; right:8px; }
+      #pad{ bottom:10px; gap:8px; }
+      .padBtn{ width:60px; height:60px; font-size:24px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <button id="btnManual" class="btn active">Manual</button>
+    <button id="btnAuto" class="btn">Auto</button>
+    <span class="pill"><b>Mode</b>: <span id="modeTxt">Manual</span></span>
+    <span class="pill"><b>Score</b>: <span id="score">0</span></span>
+    <span class="pill"><b>Speed</b>: <span id="speed">0</span></span>
+    <span class="pill"><b>Status</b>: <span id="status">RUNNING</span></span>
+  </div>
+
+  <div id="pad">
+    <button id="btnLeft" class="padBtn" aria-label="Left">⬅</button>
+    <button id="btnUp" class="padBtn" aria-label="Speed up">⬆</button>
+    <button id="btnRight" class="padBtn" aria-label="Right">➡</button>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+    // Define lanes
+    const LANES = [-1.5, 0, 1.5];
+
+    // Define speed range 0–100
+    const SPEED_MIN = 0.0;
+    const SPEED_MAX = 100.0;
+
+    // Define gameplay parameters
+    let speed = 9.0;                  // Start speed
+    let spawnEvery = 0.85;            // Obstacle spawn interval (seconds)
+    const obstacleZStart = -38;
+    const roadLength = 12;
+    const roadSegmentsCount = 10;
+
+    // Create scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b1020);
+    scene.fog = new THREE.Fog(0x0b1020, 10, 70);
+
+    // Create camera
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+    camera.position.set(0, 4.2, 9.5);
+    camera.lookAt(0, 1.2, 0);
+
+    // Create renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    document.body.appendChild(renderer.domElement);
+
+    // Add lights
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x1b2a4a, 0.85);
+    scene.add(hemi);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.05);
+    keyLight.position.set(6, 10, 4);
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0x9cc2ff, 0.35);
+    fillLight.position.set(-6, 7, 6);
+    scene.add(fillLight);
+
+    // Create road
+    const roadGroup = new THREE.Group();
+    scene.add(roadGroup);
+
+    const roadMat = new THREE.MeshStandardMaterial({ color: 0x101827, roughness: 1.0, metalness: 0.0 });
+    const stripeMat = new THREE.MeshStandardMaterial({ color: 0x2b3958, roughness: 1.0, metalness: 0.0 });
+
+    const roadSegments = [];
+    for (let i = 0; i < roadSegmentsCount; i++) {
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.25, roadLength), roadMat);
+      slab.position.set(0, -0.65, -i * roadLength);
+      roadGroup.add(slab);
+
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.08, roadLength * 0.6), stripeMat);
+      stripe.position.set(0, -0.48, slab.position.z);
+      roadGroup.add(stripe);
+
+      roadSegments.push({ slab, stripe });
+    }
+
+    // Side rails
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x0e1a33, roughness: 1.0 });
+    const railGeo = new THREE.BoxGeometry(0.3, 0.6, roadSegmentsCount * roadLength);
+    const leftRail = new THREE.Mesh(railGeo, railMat);
+    const rightRail = new THREE.Mesh(railGeo, railMat);
+    leftRail.position.set(-3.65, -0.35, -(roadSegmentsCount * roadLength) / 2 + roadLength / 2);
+    rightRail.position.set( 3.65, -0.35, -(roadSegmentsCount * roadLength) / 2 + roadLength / 2);
+    roadGroup.add(leftRail, rightRail);
+
+    // Create car
+    const carGroup = new THREE.Group();
+    scene.add(carGroup);
+
+    const carBodyMat = new THREE.MeshStandardMaterial({ color: 0x4f7cff, roughness: 0.35, metalness: 0.12 });
+    const carCabinMat = new THREE.MeshStandardMaterial({ color: 0x203a8a, roughness: 0.2, metalness: 0.05 });
+
+    const carBody = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.45, 1.85), carBodyMat);
+    carBody.position.set(0, 0.05, 2.2);
+    carGroup.add(carBody);
+
+    const carCabin = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.35, 0.75), carCabinMat);
+    carCabin.position.set(0, 0.35, 2.1);
+    carGroup.add(carCabin);
+
+    // Track lane
+    let laneIndex = 1;
+    let targetX = LANES[laneIndex];
+    let currentX = targetX;
+
+    // Obstacles
+    const obstacles = [];
+    const obstacleMat = new THREE.MeshStandardMaterial({ color: 0xff6b6b, roughness: 0.55, metalness: 0.05 });
+
+    function createObstacle() {
+      const lane = Math.floor(Math.random() * LANES.length);
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.1, 1.05), obstacleMat);
+      mesh.position.set(LANES[lane], 0.05, obstacleZStart);
+      mesh.userData.lane = lane;
+      scene.add(mesh);
+      obstacles.push(mesh);
+    }
+
+    // Collision
+    const carBox = new THREE.Box3();
+    const obsBox = new THREE.Box3();
+    function checkCollision() {
+      carBox.setFromObject(carGroup);
+      for (const obs of obstacles) {
+        obsBox.setFromObject(obs);
+        if (carBox.intersectsBox(obsBox)) return true;
+      }
+      return false;
+    }
+
+    // HUD bindings
+    const scoreEl = document.getElementById("score");
+    const speedEl = document.getElementById("speed");
+    const statusEl = document.getElementById("status");
+    const modeTxt = document.getElementById("modeTxt");
+    const btnManual = document.getElementById("btnManual");
+    const btnAuto = document.getElementById("btnAuto");
+
+    // Controls pad
+    const btnLeft = document.getElementById("btnLeft");
+    const btnRight = document.getElementById("btnRight");
+    const btnUp = document.getElementById("btnUp");
+
+    // Mode
+    let mode = "manual";
+    function setMode(m){
+      mode = m;
+      btnManual.classList.toggle("active", mode==="manual");
+      btnAuto.classList.toggle("active", mode==="auto");
+      modeTxt.textContent = mode==="auto" ? "Auto" : "Manual";
+    }
+    btnManual.onclick = ()=>setMode("manual");
+    btnAuto.onclick = ()=>setMode("auto");
+
+    // Game state
+    let score = 0;
+    let running = true;
+    let spawnTimer = 0;
+
+    function clampSpeed(v){
+      return Math.max(SPEED_MIN, Math.min(SPEED_MAX, v));
+    }
+
+    function resetGame() {
+      score = 0;
+      speed = 9.0;
+      spawnEvery = 0.85;
+      spawnTimer = 0;
+      running = true;
+      statusEl.textContent = "RUNNING";
+
+      laneIndex = 1;
+      targetX = LANES[laneIndex];
+      currentX = targetX;
+      carGroup.position.x = currentX;
+
+      for (const obs of obstacles) scene.remove(obs);
+      obstacles.length = 0;
+    }
+
+    function moveLeft() {
+      laneIndex = Math.max(0, laneIndex - 1);
+      targetX = LANES[laneIndex];
+    }
+    function moveRight() {
+      laneIndex = Math.min(LANES.length - 1, laneIndex + 1);
+      targetX = LANES[laneIndex];
+    }
+
+    // Handle keyboard
+    window.addEventListener("keydown", (e) => {
+      if (!running) {
+        if (e.code === "KeyR") resetGame();
+        return;
+      }
+      // Increase speed (0–100)
+      if (e.code === "ArrowUp") speed = clampSpeed(speed + 5.0);
+      // Decrease speed (optional)
+      if (e.code === "ArrowDown") speed = clampSpeed(speed - 5.0);
+
+      // Steering only in Manual
+      if (mode !== "manual") return;
+      if (e.code === "ArrowLeft" || e.code === "KeyA") moveLeft();
+      if (e.code === "ArrowRight" || e.code === "KeyD") moveRight();
+    });
+
+    // Handle mobile buttons
+    function bindTap(el, fn) {
+      el.addEventListener("touchstart", (e)=>{ e.preventDefault(); fn(); }, { passive:false });
+      el.addEventListener("mousedown", (e)=>{ e.preventDefault(); fn(); });
+    }
+    bindTap(btnLeft, ()=>{ if(!running) return resetGame(); if(mode==="manual") moveLeft(); });
+    bindTap(btnRight,()=>{ if(!running) return resetGame(); if(mode==="manual") moveRight(); });
+    bindTap(btnUp,   ()=>{ if(!running) return resetGame(); speed = clampSpeed(speed + 5.0); });
+
+    // Resize
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    });
+
+    // Auto driver
+    const SWITCH_HORIZON_SEC = 1.0;
+    const DEST_SAFE_SEC = 1.2;
+    const MIN_SWITCH_INTERVAL_MS = 120;
+    let lastSwitchMs = 0;
+
+    function nearestAheadDistanceForLane(lane){
+      const carZ = carGroup.position.z;
+      let best = Infinity;
+      for(const obs of obstacles){
+        const li = obs.userData.lane;
+        if(li !== lane) continue;
+        const dz = carZ - obs.position.z;
+        if(dz < 0) continue;
+        if(dz < best) best = dz;
+      }
+      return best;
+    }
+
+    function autoDecide(){
+      if(mode !== "auto") return;
+      if(!running) return;
+
+      const dangerDist = Math.max(10, speed * SWITCH_HORIZON_SEC);
+      const destSafeDist = Math.max(12, speed * DEST_SAFE_SEC);
+
+      const curDist = nearestAheadDistanceForLane(laneIndex);
+
+      if(curDist === Infinity || curDist > dangerDist) return;
+
+      const candidates = [0,1,2].filter(i => nearestAheadDistanceForLane(i) >= destSafeDist);
+
+      let bestLane = laneIndex;
+      const pool = candidates.length ? candidates : [0,1,2];
+      for(const i of pool){
+        if(nearestAheadDistanceForLane(i) > nearestAheadDistanceForLane(bestLane)) bestLane = i;
+      }
+
+      const now = performance.now();
+      if(bestLane !== laneIndex && (now - lastSwitchMs) > MIN_SWITCH_INTERVAL_MS){
+        if(bestLane < laneIndex) moveLeft();
+        if(bestLane > laneIndex) moveRight();
+        lastSwitchMs = now;
+      }
+    }
+
+    // Animate
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const dt = Math.min(clock.getDelta(), 0.05);
+
+      // Update HUD
+      scoreEl.textContent = String(Math.floor(score));
+      speedEl.textContent = speed.toFixed(1);
+
+      if (!running) {
+        renderer.render(scene, camera);
+        return;
+      }
+
+      autoDecide();
+
+      const follow = 12.0;
+      currentX += (targetX - currentX) * (1 - Math.exp(-follow * dt));
+      carGroup.position.x = currentX;
+      carGroup.position.y = Math.sin(clock.elapsedTime * 6.0) * 0.03;
+
+      const zMove = speed * dt;
+
+      for (const seg of roadSegments) {
+        seg.slab.position.z += zMove;
+        seg.stripe.position.z += zMove;
+        if (seg.slab.position.z > 6) {
+          seg.slab.position.z -= roadSegmentsCount * roadLength;
+          seg.stripe.position.z = seg.slab.position.z;
+        }
+      }
+
+      spawnTimer += dt;
+      if (spawnTimer >= spawnEvery) {
+        spawnTimer = 0;
+        createObstacle();
+        speed = clampSpeed(speed + 0.12);
+        spawnEvery = Math.max(0.50, spawnEvery - 0.004);
+      }
+
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const obs = obstacles[i];
+        obs.position.z += zMove;
+        if (obs.position.z > 8) {
+          scene.remove(obs);
+          obstacles.splice(i, 1);
+          score += 10;
+        }
+      }
+
+      if (checkCollision()) {
+        running = false;
+        statusEl.textContent = "CRASHED (click any button or press R)";
+      }
+
+      score += dt * 6.0;
+
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener("pointerdown", ()=>{ if(!running) resetGame(); });
+
+    resetGame();
+    animate();
+  </script>
+</body>
+</html>
