@@ -1,6 +1,6 @@
 # 3D Lane Car Autopilot (Three.js)
 
-**Author:** Pedro Yáñez Meléndez  
+**Author:** Pedro Yanez Melendez  
 
 ## Overview
 A **responsive 3D lane-based car game** built with **Three.js**, featuring **manual driving** and a **robust rule-based autopilot** that avoids obstacles reliably in real time.  
