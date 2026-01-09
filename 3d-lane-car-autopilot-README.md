@@ -6,9 +6,6 @@
 A **responsive 3D lane-based car game** built with **Three.js**, featuring **manual driving** and a **robust rule-based autopilot** that avoids obstacles reliably in real time.  
 Playable on **desktop, tablet, and mobile** via GitHub Pages.
 
-> ⚠️ This project uses a **deterministic autopilot (rules + geometry)**.  
-> It does **not** include reinforcement learning or model training.
-
 ---
 
 ## Live Demo
